@@ -105,12 +105,22 @@ def test_multiple_stigs_survive_roundtrip():
 
 
 def test_duplicate_stig_benchmark_id_rejected():
-    """The only limit on multiple STIGs: benchmark_id must be unique per device."""
+    """Same benchmark_id AND same version is a true duplicate -> rejected."""
     with pytest.raises(ValidationError):
         DeviceDefinition(**{**VALID, "applicable_stigs": [
             {"benchmark_id": "DUP", "version": "V1R1"},
-            {"benchmark_id": "DUP", "version": "V2R2"},
+            {"benchmark_id": "DUP", "version": "V1R1"},
         ]})
+
+
+def test_same_stig_different_versions_allowed():
+    """The same benchmark may be attached at multiple distinct versions."""
+    d = DeviceDefinition(**{**VALID, "applicable_stigs": [
+        {"benchmark_id": "CISCO_IOS_XE_SW_NDM", "version": "V2R9"},
+        {"benchmark_id": "CISCO_IOS_XE_SW_NDM", "version": "V3R1"},
+    ]})
+    assert len(d.applicable_stigs) == 2
+    assert {s.version for s in d.applicable_stigs} == {"V2R9", "V3R1"}
 
 
 REJECTIONS = [

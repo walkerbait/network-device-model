@@ -601,9 +601,13 @@ class DeviceDefinition(StrictModel):
 
     @model_validator(mode="after")
     def _unique_applicable_stigs(self) -> "DeviceDefinition":
-        ids = [s.benchmark_id for s in self.applicable_stigs]
-        if len(ids) != len(set(ids)):
-            raise ValueError("duplicate benchmark_id in applicable_stigs")
+        # Uniqueness is on (benchmark_id, version): the same benchmark may appear
+        # at different versions, but the identical benchmark+version may not.
+        keys = [(s.benchmark_id, s.version) for s in self.applicable_stigs]
+        if len(keys) != len(set(keys)):
+            raise ValueError(
+                "duplicate (benchmark_id, version) in applicable_stigs"
+            )
         return self
 
     @model_validator(mode="after")
