@@ -1,207 +1,391 @@
-# Requirements: STIG Catalog Importer
+# Requirements Document
 
-## Overview
+## Introduction
 
-The `network_models.stig` package already defines the target data models —
-`StigRule`, `Stig`, and `StigCatalog` — but nothing populates them from real
-DISA content. This spec covers building a **STIG catalog importer**: tooling that
-parses DISA XCCDF benchmark XML (a `*-xccdf.xml` "Manual" file) into validated
-`Stig`/`StigRule` objects and assembles a `StigCatalog` from one or more such
-files.
+This feature adds first-class **STIG (Security Technical Implementation Guide)**
+support to the portable `network_models` package. It introduces a reference
+**catalog** of STIGs and SRGs modeled to full rule granularity, revises the
+device-type STIG reference to be version-agnostic (concept-only), and adds a
+per-component pinned STIG **assignment** with assessment status to deployed
+systems. A thin, stdlib-only validation-harness script parses the local DISA
+XCCDF benchmark bundle and validates every benchmark against these models.
 
-The importer follows the existing precedent set by
-`scripts/import_devicetype_library.py` (which validates the Nautobot
-devicetype-library into `DeviceDefinition` objects): it lives in `scripts/`, may
-use tooling beyond the package's portability boundary, and exposes a small CLI
-with an optional `--out` mode that persists validated objects as JSON.
+The design deliberately keeps STIG references at three granularities so each
+layer stays honest about what it knows:
 
-The repository ships a real sample file at the root —
-`U_AAA_Services_SRG_V2R2_Manual-xccdf.xml` (the DISA "AAA Services SRG") — which
-is the integration fixture the importer must parse cleanly.
+1. **Catalog** — the reference library (`Stig`, `StigProfile`, `StigRule`,
+   `StigCatalog`) with identity `(benchmark_id, version)`, derived verbatim from
+   DISA XCCDF content.
+2. **Device concept-reference** — a device *type* declares which STIGs apply by
+   concept (`benchmark_id` only, no version).
+3. **System pinned-assignment** — a deployed *component* pins a concrete
+   `(benchmark_id, version)` and records an assessment status.
 
-## Terminology
+Everything in this feature lives inside the portable package (Pydantic v2 +
+standard library only) plus one validation-harness script under `scripts/`. The
+config-compliance evaluator, the picker suggestion mapping, the production upload
+importer, and the "which devices must update" query are **app-layer and out of
+scope here** (see Non-Goals / Out of Scope). This requirements document is
+derived from the approved design at `.kiro/specs/stig-catalog/design.md`, which
+remains the source of truth.
 
-- **XCCDF** — the XML schema DISA publishes STIG/SRG benchmark content in
-  (namespace `http://checklists.nist.gov/xccdf/1.1`).
-- **Benchmark** — the root `<Benchmark>` element; maps to one `Stig`.
-- **Group** — an `<xccdf:Group>` whose `id` is the Vuln ID (e.g. `V-204636`);
-  contains exactly one `<Rule>`. Maps (with its Rule) to one `StigRule`.
-- **Rule** — the `<xccdf:Rule>` carrying `@severity`, `<version>` (the human
-  STIG-ID / SRG-ID), `<title>`, `<description>`, `<check>`, `<fixtext>`, and
-  `<ident>` elements.
-- **CCI** — Control Correlation Identifier; an `<ident>` whose `@system` contains
-  `cci` (value like `CCI-000015`).
+## Glossary
 
----
+- **STIG**: Security Technical Implementation Guide — a concrete, technology-specific
+  security benchmark; the only catalog type that is picker-selectable and
+  assignable.
+- **SRG**: Security Requirements Guide — a technology-agnostic benchmark kept in
+  the catalog for lineage only; not picker-selectable.
+- **XCCDF**: The eXtensible Configuration Checklist Description Format (version 1.1,
+  namespace `http://checklists.nist.gov/xccdf/1.1`) used by DISA benchmark files.
+- **benchmark_id**: The versionless benchmark identifier taken verbatim from the
+  XCCDF `Benchmark/@id` (e.g. `AAA_Services`).
+- **version**: The benchmark version taken verbatim from the XCCDF `<version>`
+  element (e.g. `2`, `V5R3`); never parsed or normalized.
+- **CAT (Category)**: The DISA severity label (CAT I / CAT II / CAT III) derived
+  from the XCCDF `@severity` (high / medium / low).
+- **Catalog**: `StigCatalog` — the reference library the web app selects from,
+  unique on `(benchmark_id, version)`.
+- **Catalog_Model**: The set of catalog models — `StigRule`, `StigProfile`,
+  `Stig`, `StigCatalog` — in `network_models/stig/`.
+- **StigRule**: A single XCCDF `<Group>/<Rule>` pair modeled to full metadata
+  granularity.
+- **StigProfile**: An XCCDF `<Profile>` — a named selection of rule-id references
+  within one STIG.
+- **ApplicableStig**: The device-type concept reference (`benchmark_id` + optional
+  `title` cache) on `DeviceDefinition`.
+- **StigAssignment**: The per-component pinned reference (`benchmark_id` + `version`
+  + `status`) on a system `Component`.
+- **AssignmentStatus**: The closed vocabulary of assessment statuses for a
+  `StigAssignment`.
+- **Import_Harness**: The `scripts/import_stig_library.py` validation harness.
+- **StrictModel**: The strict Pydantic base (`extra="forbid"`,
+  `str_strip_whitespace=True`, `validate_assignment=True`) every model inherits.
+- **DISA_Bundle**: The local `U_SRG-STIG_Library_April_2026` DISA SRG-STIG Library
+  (XCCDF 1.1 ZIPs plus loose XML).
 
-## Requirement 1: Parse a single XCCDF benchmark into a `Stig`
+## Requirements
 
-**As** a catalog builder, **I want** to load one XCCDF Manual XML file into a
-validated `Stig` object **so that** benchmark metadata and every rule are
-available as strict models.
+### Requirement 1: STIG catalog models in the portable package
 
-**Acceptance criteria:**
+**User Story:** As a model author, I want STIG catalog models defined in
+`network_models/stig/` using only Pydantic and the standard library, so that the
+catalog stays portable and can be vendored or extracted unchanged.
 
-1. A function accepts a path to an XCCDF XML file and returns a `Stig`.
-2. XCCDF namespaces are handled correctly (the default namespace
-   `http://checklists.nist.gov/xccdf/1.1` must not require callers to know it).
-3. Benchmark metadata maps as follows:
-   - `Stig.benchmark_id` ← `<Benchmark id="...">`
-   - `Stig.title` ← `<Benchmark>/<title>`
-   - `Stig.version` ← a version+release string derived from `<version>` and the
-     `release-info` `<plain-text>` (e.g. `V2R2`, or `Release: 2 Benchmark Date:
-     30 Jan 2025` folded into a stable version string).
-   - `Stig.date` ← the `<status date="...">` date when present.
-4. Malformed or non-XCCDF XML raises a clear, typed error naming the file — it
-   does not return a partially-populated `Stig`.
+#### Acceptance Criteria
 
-**Exit criteria:**
-- Calling the loader on `U_AAA_Services_SRG_V2R2_Manual-xccdf.xml` returns a
-  `Stig` whose `benchmark_id == "AAA_Services"` and whose `title` is the SRG
-  title, with no `ValidationError`.
+1. THE Catalog_Model SHALL define `Stig`, `StigProfile`, `StigRule`, and
+   `StigCatalog` in `network_models/stig/`.
+2. THE Catalog_Model SHALL define the vocabulary enums `RuleSeverity`, `StigType`,
+   `AssignmentStatus`, and `TargetLayer` in `network_models/stig/vocab.py`.
+3. THE Catalog_Model SHALL inherit from StrictModel so unknown keys are forbidden,
+   whitespace is stripped, and assignment is validated.
+4. THE Catalog_Model SHALL import only Pydantic and the Python standard library.
+5. WHERE a constrained string field is defined, THE Catalog_Model SHALL build its
+   enum with the `_str_enum` helper from a verbatim value list held as a
+   module-level constant in `vocab.py`.
+6. THE Catalog_Model SHALL declare `__all__` in each subpackage module so every
+   public model and enum is re-exported from the top-level `network_models`
+   package.
 
----
+### Requirement 2: Distinguish SRGs from STIGs by type
 
-## Requirement 2: Map each Group/Rule pair to a `StigRule`
+**User Story:** As a picker user, I want SRGs and STIGs distinguished by an
+explicit type, so that only STIGs are offered for selection while SRGs remain
+available for lineage.
 
-**As** a compliance engineer, **I want** every XCCDF Group/Rule turned into a
-`StigRule` with identifiers and text intact **so that** the catalog is complete
-down to individual rules.
+#### Acceptance Criteria
 
-**Acceptance criteria:**
+1. THE Catalog_Model SHALL represent each catalog entry with a `type` field whose
+   value is `srg` or `stig`.
+2. IF a `Stig` is constructed with a `type` value outside `{srg, stig}`, THEN THE
+   Catalog_Model SHALL raise a `ValidationError`.
+3. WHEN `StigCatalog.benchmark_ids` is called with `type="stig"`, THE Catalog_Model
+   SHALL return only benchmark ids whose entries are of type `stig`.
+4. WHEN `StigCatalog.benchmark_ids` is called with `type="srg"`, THE Catalog_Model
+   SHALL return only benchmark ids whose entries are of type `srg`.
+5. THE Catalog_Model SHALL retain SRG entries in the catalog for lineage.
 
-1. Each `<Group>` (and its single nested `<Rule>`) becomes one `StigRule`.
-2. Field mapping:
-   - `StigRule.group_id` ← `<Group id="...">` (the Vuln ID, e.g. `V-204636`)
-   - `StigRule.rule_id`  ← `<Rule id="...">` (e.g. `SV-204636r1043176_rule`)
-   - `StigRule.stig_id`  ← `<Rule>/<version>` (e.g. `SRG-APP-000023-AAA-000030`)
-   - `StigRule.severity` ← `<Rule severity="...">` (`high`/`medium`/`low`;
-     default to `unknown` when the attribute is absent)
-   - `StigRule.title`    ← `<Rule>/<title>`
-3. `severity` values map verbatim onto `RuleSeverity`; an unexpected value is a
-   validation error, not a silent pass.
-4. Rules missing a mandatory field (`group_id`, `rule_id`, `title`, `severity`)
-   surface a clear error identifying the offending Group.
+### Requirement 3: Catalog identity and uniqueness
 
-**Exit criteria:**
-- The AAA Services fixture yields one `StigRule` per `<Group>` (77 rules), each
-  with a non-empty `group_id`, `rule_id`, and `title`, and a `severity` that is a
-  valid `RuleSeverity`.
+**User Story:** As a catalog maintainer, I want catalog identity keyed on
+versionless `benchmark_id` plus a separate `version`, so that the same benchmark
+can appear at multiple versions without collision and every entry traces back to
+its source file.
 
----
+#### Acceptance Criteria
 
-## Requirement 3: Extract discussion, check, fix, and CCI content
+1. THE Catalog_Model SHALL store `benchmark_id` verbatim from the XCCDF
+   `Benchmark/@id`.
+2. THE Catalog_Model SHALL store `version` verbatim from the XCCDF `<version>`
+   element as a separate field.
+3. THE Catalog_Model SHALL store the originating `source_file` name verbatim on
+   each `Stig`.
+4. IF two entries in a `StigCatalog` share the same `(benchmark_id, version)`,
+   THEN THE Catalog_Model SHALL raise a `ValidationError`.
+5. WHEN a `StigCatalog` is constructed with entries whose `(benchmark_id, version)`
+   keys are all distinct, THE Catalog_Model SHALL construct successfully.
+6. WHEN `StigCatalog.get` is called with a `benchmark_id` and a `version`, THE
+   Catalog_Model SHALL return the matching `Stig` or `None` when no entry matches.
 
-**As** a compliance engineer, **I want** the human-readable and traceability
-content extracted **so that** the catalog can drive both display and
-control-mapping.
+### Requirement 4: Full rule granularity for StigRule
 
-**Acceptance criteria:**
+**User Story:** As a compliance tooling author, I want each STIG rule captured at
+full metadata granularity, so that downstream evaluation has faithful access to
+identifiers, severity, checks, and fixes.
 
-1. `StigRule.discussion` ← the `<VulnDiscussion>` text carried inside the Rule's
-   `<description>` element (XCCDF packs discussion as escaped/pseudo-XML inside
-   `<description>`; the importer must recover just the discussion prose).
-2. `StigRule.check_text` ← `<Rule>/<check>/<check-content>`.
-3. `StigRule.fix_text` ← `<Rule>/<fixtext>`.
-4. `StigRule.ccis` ← the text of every `<ident>` whose `@system` contains `cci`
-   (e.g. `CCI-000015`), de-duplicated in document order. `<ident>` elements that
-   are legacy IDs (`@system` referencing `legacy`) are excluded.
-5. Missing optional content leaves the corresponding field `None`/empty rather
-   than raising.
+#### Acceptance Criteria
 
-**Exit criteria:**
-- For the AAA Services fixture, at least one imported `StigRule` has a non-empty
-  `discussion`, `check_text`, `fix_text`, and a `ccis` list containing values of
-  the form `CCI-######`, with no duplicate CCIs in any rule.
+1. THE Catalog_Model SHALL capture on each `StigRule` the fields `group_id`,
+   `rule_id`, `stig_id`, `severity`, `weight`, `title`, `discussion`,
+   `check_content`, `check_content_ref`, `check_system`, `fix_text`, `fix_id`,
+   `ccis`, and `legacy_ids`.
+2. THE Catalog_Model SHALL store `severity` verbatim as one of `high`, `medium`,
+   `low`, or `unknown`.
+3. WHEN a `StigRule` has severity `high`, `medium`, or `low`, THE Catalog_Model
+   SHALL expose a derived `cat` property equal to `CAT I`, `CAT II`, or `CAT III`
+   respectively.
+4. WHEN a `StigRule` has severity `unknown`, THE Catalog_Model SHALL expose a `cat`
+   property equal to `None`.
+5. WHEN a `StigRule` `discussion` is populated from XCCDF, THE Catalog_Model SHALL
+   store the best-effort `<VulnDiscussion>` text and fall back to the raw
+   `<description>` text when no `<VulnDiscussion>` is present.
+6. IF a `StigRule` is constructed with duplicate entries in `ccis` or `legacy_ids`,
+   THEN THE Catalog_Model SHALL raise a `ValidationError`.
+7. IF a `StigRule` is constructed with a `severity` value outside the vocabulary,
+   THEN THE Catalog_Model SHALL raise a `ValidationError`.
 
----
+### Requirement 5: Rule and profile integrity within a STIG
 
-## Requirement 4: Build a `StigCatalog` from a directory of benchmarks
+**User Story:** As a catalog maintainer, I want a STIG to enforce internal
+consistency of its rules and profiles, so that references never dangle and
+identifiers never collide.
 
-**As** a catalog builder, **I want** to point the importer at a directory and get
-a single validated `StigCatalog` **so that** the web app can select across many
-benchmarks/versions at once.
+#### Acceptance Criteria
 
-**Acceptance criteria:**
+1. IF a `Stig` is constructed with duplicate `rule_id` values among its rules,
+   THEN THE Catalog_Model SHALL raise a `ValidationError`.
+2. IF a `Stig` is constructed with duplicate `group_id` values among its rules,
+   THEN THE Catalog_Model SHALL raise a `ValidationError`.
+3. IF a `Stig` is constructed with duplicate `id` values among its profiles, THEN
+   THE Catalog_Model SHALL raise a `ValidationError`.
+4. IF a `StigProfile` references a rule id in `selected_rule_ids` that does not
+   exist among the STIG's rules, THEN THE Catalog_Model SHALL raise a
+   `ValidationError`.
+5. WHEN every `selected_rule_ids` entry in every profile references an existing
+   rule id, THE Catalog_Model SHALL construct the `Stig` successfully.
+6. THE `Stig.severity_counts` derived view SHALL report rule counts grouped by CAT
+   label such that the sum of the counts equals the number of rules in the STIG.
 
-1. A function accepts a directory path and a catalog `version` label and returns
-   a `StigCatalog` containing one `Stig` per `*-xccdf.xml` file found
-   (recursively).
-2. The resulting `StigCatalog` validates, including its
-   `(benchmark_id, version)` uniqueness rule.
-3. A per-file parse failure is reported with the file name and does not abort the
-   whole build unless the caller opts into strict mode; the default collects and
-   reports errors while importing the files that succeed.
-4. Files that are not XCCDF benchmarks are skipped, not treated as errors.
+### Requirement 6: Profiles store rule references only
 
-**Exit criteria:**
-- Running the directory build against the repository root produces a
-  `StigCatalog` that includes the AAA Services benchmark and validates without
-  error.
+**User Story:** As a catalog maintainer, I want profiles to store only rule-id
+references rather than rule bodies, so that overlapping profiles do not duplicate
+rule content and JSON stays compact.
 
----
+#### Acceptance Criteria
 
-## Requirement 5: CLI entry point mirroring the devicetype importer
+1. THE Catalog_Model SHALL store profile selections as `selected_rule_ids`
+   containing rule-id references only, with no embedded rule bodies.
+2. IF a `StigProfile` is constructed with duplicate entries in `selected_rule_ids`,
+   THEN THE Catalog_Model SHALL raise a `ValidationError`.
+3. THE `selected_rule_ids` on a `StigProfile` SHALL reference `StigRule.rule_id`
+   values within the same `Stig`.
 
-**As** a developer, **I want** a command-line interface consistent with
-`scripts/import_devicetype_library.py` **so that** importing STIGs feels the same
-as importing device types.
+### Requirement 7: JSON serialization round-trip fidelity
 
-**Acceptance criteria:**
+**User Story:** As a tooling author, I want catalog models to round-trip through
+JSON without loss, so that the harness can persist per-benchmark JSON and reload
+it faithfully.
 
-1. `python scripts/import_stig_library.py <path>` accepts either a single XCCDF
-   file or a directory and prints a concise summary (files parsed, STIGs built,
-   total rules, rule counts by CAT level, and any per-file errors).
-2. A `--out` flag persists each validated `Stig` (and/or the whole
-   `StigCatalog`) as JSON under a gitignored output directory (mirroring the
-   devicetype importer's `converted/` behavior).
-3. Exit code is non-zero when strict mode is requested and any file fails.
-4. The script only imports extra tooling (stdlib `xml.etree.ElementTree` and, if
-   needed, `PyYAML`) from `scripts/`; the `network_models/` package remains
-   Pydantic + stdlib only.
+#### Acceptance Criteria
 
-**Exit criteria:**
-- `python scripts/import_stig_library.py U_AAA_Services_SRG_V2R2_Manual-xccdf.xml`
-  exits 0 and prints a summary reporting 1 STIG and 77 rules.
+1. WHEN a valid `Stig` is serialized with `model_dump(mode="json")` and then
+   re-validated with `model_validate`, THE Catalog_Model SHALL produce an object
+   equal to the original.
+2. THE Catalog_Model SHALL preserve rule order, `ccis` order, `legacy_ids` order,
+   and profiles across a JSON round-trip with no field loss.
 
----
+### Requirement 8: Device-type concept reference (revised ApplicableStig)
 
-## Requirement 6: Tests
+**User Story:** As a device library maintainer, I want a device type to declare
+applicable STIGs by concept using `benchmark_id` only, so that device definitions
+do not churn on every STIG release.
 
-**As** a maintainer, **I want** unit and integration tests **so that** the
-importer's field mapping and error handling stay correct as XCCDF quirks are
-discovered.
+#### Acceptance Criteria
 
-**Acceptance criteria:**
+1. THE `ApplicableStig` model SHALL contain a required `benchmark_id` and an
+   optional `title` display cache.
+2. THE `ApplicableStig` model SHALL NOT contain a `version` field.
+3. IF a `DeviceDefinition` is constructed with duplicate `benchmark_id` values in
+   `applicable_stigs`, THEN THE Catalog_Model SHALL raise a `ValidationError`.
+4. WHEN a `DeviceDefinition` has `applicable_stigs` with distinct `benchmark_id`
+   values, THE Catalog_Model SHALL construct successfully.
 
-1. Unit tests cover, with small inline XCCDF fixtures: benchmark-metadata
-   mapping, Group/Rule mapping, severity mapping (including the `unknown`
-   default), CCI extraction (including exclusion of legacy idents and
-   de-duplication), and `VulnDiscussion` recovery.
-2. Error-path tests assert that malformed XML and a missing mandatory field
-   raise the importer's typed error.
-3. An integration test parses the bundled `U_AAA_Services_SRG_V2R2_Manual-xccdf.xml`
-   and asserts the STIG-level and rule-count exit criteria above.
-4. Tests live in `tests/` and run under `python -m pytest tests/ -q` alongside
-   the existing suite.
+### Requirement 9: Optional catalog resolver for device definitions
 
-**Exit criteria:**
-- `python -m pytest tests/ -q` passes, including the new STIG importer tests.
+**User Story:** As a device library maintainer, I want catalog resolution to be
+opt-in, so that device definitions validate standalone but can be checked against
+a catalog when one is supplied.
 
----
+#### Acceptance Criteria
 
-## Requirement 7: Documentation
+1. WHEN a `DeviceDefinition` is constructed without a catalog, THE Catalog_Model
+   SHALL validate the definition without requiring any `benchmark_id` to resolve.
+2. WHEN `DeviceDefinition.validate_against_catalog` is called with a catalog in
+   which every `applicable_stigs` `benchmark_id` is present, THE Catalog_Model
+   SHALL return the definition without error.
+3. IF `DeviceDefinition.validate_against_catalog` is called with a catalog missing
+   one or more `applicable_stigs` `benchmark_id` values, THEN THE Catalog_Model
+   SHALL raise a `ValidationError` identifying the unresolved ids.
 
-**As** a user of the repo, **I want** the README/steering to mention the STIG
-importer **so that** the workflow is discoverable next to the devicetype
-importer.
+### Requirement 10: System pinned STIG assignment
 
-**Acceptance criteria:**
+**User Story:** As a system operator, I want each deployed component to pin STIG
+versions and record assessment status, so that instances can track compliance
+independently and deviate from their device type when needed.
 
-1. `README.md` gains a short "Importing STIGs" note (command examples) parallel
-   to the devicetype-library section.
-2. `.kiro/steering/tech.md` "Common commands" lists the STIG importer command.
+#### Acceptance Criteria
 
-**Exit criteria:**
-- The README and steering docs reference `scripts/import_stig_library.py` with a
-  working example command.
+1. THE `StigAssignment` model SHALL contain a required `benchmark_id`, a required
+   pinned `version`, a `status`, an optional `assessed_date`, and optional `notes`.
+2. WHEN a `StigAssignment` is constructed without an explicit `status`, THE
+   Catalog_Model SHALL default `status` to `not_assessed`.
+3. THE `Component` model SHALL expose a `stig_assignments` list of `StigAssignment`
+   entries that is listed explicitly and not auto-derived from the device
+   definition.
+4. IF a `Component` is constructed with duplicate `(benchmark_id, version)` pairs
+   in `stig_assignments`, THEN THE Catalog_Model SHALL raise a `ValidationError`.
+5. WHEN a `Component` has two `stig_assignments` sharing a `benchmark_id` but with
+   different `version` values, THE Catalog_Model SHALL construct successfully.
+6. IF a `StigAssignment` is constructed with a `status` value outside
+   `{not_assessed, compliant, open, not_applicable, inherited_pending}`, THEN THE
+   Catalog_Model SHALL raise a `ValidationError`.
+
+### Requirement 11: Optional assignment resolver and warn-only divergence
+
+**User Story:** As a system operator, I want optional catalog resolution and a
+warn-only divergence report for assignments, so that I can catch unresolved pins
+and intentional deviations without blocking standalone validation.
+
+#### Acceptance Criteria
+
+1. WHEN a `System` is constructed without a catalog, THE Catalog_Model SHALL
+   validate the system without requiring any assignment to resolve.
+2. WHEN `System.validate_stig_assignments` is called with a catalog in which every
+   component assignment resolves to a `(benchmark_id, version)`, THE Catalog_Model
+   SHALL return the system without error.
+3. IF `System.validate_stig_assignments` is called with a catalog missing a pinned
+   `(benchmark_id, version)`, THEN THE Catalog_Model SHALL raise a
+   `ValidationError` identifying the unresolved assignment.
+4. WHEN `System.stig_divergences` is called with a device definition library, THE
+   Catalog_Model SHALL return exactly the `(component_id, benchmark_id)` pairs a
+   component assigns that its device definition does not declare.
+5. THE `System.stig_divergences` query SHALL NOT raise for any input and SHALL
+   return an empty list when every assignment is backed by the device type's
+   `applicable_stigs`.
+
+### Requirement 12: latest_version lookup is well-defined
+
+**User Story:** As a catalog consumer, I want a well-defined latest-version lookup,
+so that the app layer can build the "which devices must update" query on a stable
+foundation without parsing heterogeneous version strings.
+
+#### Acceptance Criteria
+
+1. WHEN `StigCatalog.latest_version` is called for a `benchmark_id` present in the
+   catalog, THE Catalog_Model SHALL return a version value that is a member of the
+   versions present for that `benchmark_id`.
+2. WHEN `StigCatalog.latest_version` is called for a `benchmark_id` absent from the
+   catalog, THE Catalog_Model SHALL return `None`.
+3. WHERE entries for a `benchmark_id` carry `status_date` values, THE Catalog_Model
+   SHALL select the version with the most recent `status_date`.
+4. WHERE no entry for a `benchmark_id` carries a `status_date`, THE Catalog_Model
+   SHALL select the last-seen version in catalog order.
+5. THE Catalog_Model SHALL NOT parse or normalize version strings when determining
+   the latest version.
+
+### Requirement 13: XCCDF validation-harness script
+
+**User Story:** As a maintainer, I want a stdlib-only harness that parses the DISA
+bundle and validates every benchmark against the models, so that I can confirm the
+schema faithfully represents real DISA content.
+
+#### Acceptance Criteria
+
+1. THE Import_Harness SHALL be provided as `scripts/import_stig_library.py`.
+2. THE Import_Harness SHALL parse XCCDF content using only the standard library
+   `zipfile` and `xml.etree.ElementTree` modules.
+3. WHEN the source path is a directory or a single `*.zip`, THE Import_Harness SHALL
+   collect each `*-xccdf.xml` member and use the outer zip name as the source file.
+4. WHEN the source path is a loose `*-xccdf.xml` file or a directory containing
+   loose `*-xccdf.xml` files, THE Import_Harness SHALL accept and parse those files.
+5. WHEN each benchmark is parsed, THE Import_Harness SHALL validate it against the
+   `Stig` model.
+6. WHEN parsing completes, THE Import_Harness SHALL print a pass/fail summary
+   grouped by error cause.
+7. IF any benchmark fails validation or fails to load, THEN THE Import_Harness SHALL
+   exit with a non-zero status.
+8. WHERE the `--out` option is supplied, THE Import_Harness SHALL write one JSON file
+   per benchmark named `<benchmark_id>_<version>.json` plus a `catalog_manifest.json`
+   index into a `stig_catalog/` directory.
+9. IF a benchmark file is malformed and cannot be parsed, THEN THE Import_Harness
+   SHALL record the file in the failure summary and continue processing remaining
+   files.
+
+### Requirement 14: Test coverage and migration of existing tests
+
+**User Story:** As a maintainer, I want tests following the existing pytest
+patterns and the two affected device STIG tests migrated, so that the new behavior
+is verified and prior expectations are updated to the revised model.
+
+#### Acceptance Criteria
+
+1. THE test suite SHALL verify catalog uniqueness on `(benchmark_id, version)`.
+2. THE test suite SHALL verify severity-to-CAT derivation for `high`, `medium`,
+   `low`, and `unknown`.
+3. THE test suite SHALL verify profile `selected_rule_ids` resolution, including
+   the dangling-reference failure case.
+4. THE test suite SHALL verify the optional device and system catalog resolvers
+   validate standalone and raise only when a supplied catalog fails to resolve.
+5. THE test suite SHALL verify `StigAssignment` uniqueness on
+   `(benchmark_id, version)` and the closed set of statuses.
+6. THE test suite SHALL verify that the same `benchmark_id` at two different
+   versions is accepted at the component layer.
+7. THE test suite SHALL migrate `test_duplicate_stig_benchmark_id_rejected` to
+   assert duplicate `benchmark_id` alone is rejected in `applicable_stigs`.
+8. THE test suite SHALL migrate `test_same_stig_different_versions_allowed` to the
+   system/component suite as two `StigAssignment` entries sharing `benchmark_id`
+   with differing `version`.
+
+### Requirement 15: Repository hygiene for harness output
+
+**User Story:** As a maintainer, I want the harness output directory ignored by
+git, so that generated catalog JSON never gets committed.
+
+#### Acceptance Criteria
+
+1. THE repository `.gitignore` SHALL include an entry for `stig_catalog/`.
+
+## Non-Goals / Out of Scope
+
+The following are deliberately excluded from this repository. Their contracts are
+documented in the design so the boundary is explicit, but no functional
+requirements in this document demand their implementation here.
+
+1. **ComplianceCheck model and evaluator** — Lives in the app layer because it
+   knows the NaC schema and uses JMESPath to assert against a rendered NaC config
+   as the primary `target_layer` (with the model as an alternative). Including it
+   would break the portability boundary, since `network_models/` must import only
+   Pydantic and the standard library. The `TargetLayer` vocabulary is defined in
+   `stig/vocab.py` for shared use, but the check model itself is out of scope.
+2. **Picker suggestion mapping** — The curated
+   `(category, platform, role?) -> [benchmark_id]` mapping is app-layer curated
+   data (hand-seeded JSON/YAML), not a schema, and is out of scope.
+3. **Production upload/ingest importer** — The user-facing upload workflow is
+   app-owned. Only the thin, stdlib-only validation harness
+   (`scripts/import_stig_library.py`) is in scope here.
+4. **"Which devices must update on version bump" query** — An app-layer query that
+   compares `StigAssignment.version` against the catalog's latest version. It reads
+   the in-scope models but is not schema state, so it is out of scope. This
+   repository provides only the `StigCatalog.latest_version` foundation it builds on.
