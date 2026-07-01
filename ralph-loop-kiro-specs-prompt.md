@@ -118,7 +118,7 @@ Each entry follows this format — short, scannable, no prose:
 - ❌ `import { foo } from 'lib'` → ✅ `import { foo } from 'lib/index.js'` (ESM requires explicit extensions)
 - ❌ Creating migration without IF NOT EXISTS → ✅ Always use IF NOT EXISTS (prevents re-run failures)
 - ❌ Running tests with `npm test` → ✅ `npm run test:unit` (project uses separate test scripts)
-- ❌ UNRESOLVED: [description of issue that couldn't be fixed after 3 attempts]
+- ❌ UNRESOLVED: [description of issue that couldn't be fixed after 5 attempts]
 ```
 
 **When to write a correction:** Any time you encounter an error, a failed command, a wrong assumption, or a workaround — anything where your first attempt was wrong and you had to adjust. Write it immediately when it happens, not at the end of the task.

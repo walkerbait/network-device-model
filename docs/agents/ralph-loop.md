@@ -47,8 +47,14 @@ RALPH_AGENT_CMD='claude -p --dangerously-skip-permissions' \
 
 ## Available specs
 
-- `.kiro/specs/stig-catalog/` — build the XCCDF → `network_models.stig` importer.
+- `.kiro/specs/stig-catalog/` — STIG catalog models + XCCDF validation harness.
 - `.kiro/specs/network-device-model/` — the original device-model spec.
 
-Generated per run (created by the script/agent, safe to delete to restart):
-`progress.md`, `specs_time.md`, `summary.html`.
+## Tracking files
+
+The script creates the per-spec tracking files if they are missing —
+`progress.md` and `specs_time.md` — and the agent writes `summary.html` when the
+task list is complete. All three live under the spec directory and are safe to
+delete to restart a run. A spec may also ship a pre-seeded `progress.md` (for
+example with starter Corrections / Codebase Patterns); when present the script
+leaves it in place and the agent appends to it.

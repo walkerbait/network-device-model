@@ -53,9 +53,13 @@ if ! [[ "$MAX_ITERATIONS" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
-# Validate SPECS_NAME is a non-empty string (no whitespace-only)
-if ! [[ "$SPECS_NAME" =~ [^[:space:]] ]]; then
-  echo -e "${RED}❌ Error: <specs_name> must be a non-empty string${NC}" >&2
+# Validate SPECS_NAME is a safe directory name. It is interpolated into a
+# filesystem path (SPECS_DIR) and used as a sed replacement, so restrict it to
+# letters, digits, dot, dash, and underscore and reject any '..' to block path
+# traversal and sed-substitution injection. Echo the offending value to help
+# debugging.
+if ! [[ "$SPECS_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "$SPECS_NAME" == *".."* ]]; then
+  echo -e "${RED}❌ Error: <specs_name> must match ^[A-Za-z0-9._-]+\$ and contain no '..', got '${BOLD}$SPECS_NAME${RED}'${NC}" >&2
   exit 1
 fi
 SCRIPT_DIR="$(cd "$(dirname \
