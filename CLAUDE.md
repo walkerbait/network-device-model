@@ -13,3 +13,7 @@ Default vocabulary — `needs-triage`, `needs-info`, `ready-for-agent`, `ready-f
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Ralph loop
+
+Spec-driven, one-task-per-iteration agent runner over Kiro specs (`ralph-loop-kiro-specs-script.sh` + prompt). See `docs/agents/ralph-loop.md`.
