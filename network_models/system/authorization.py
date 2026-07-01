@@ -20,7 +20,7 @@ from typing import Optional
 
 from pydantic import Field, computed_field, model_validator
 
-from network_models.base import StrictModel
+from network_models.base import ComputedFieldModel, StrictModel
 from network_models.system.assessment import Checklist, ControlAssessment
 from network_models.system.poam import PoamItem
 from network_models.system.vocab import (
@@ -52,7 +52,7 @@ class Categorization(StrictModel):
 # ---------------------------------------------------------------------------
 # AuthorizationPackage
 # ---------------------------------------------------------------------------
-class AuthorizationPackage(StrictModel):
+class AuthorizationPackage(ComputedFieldModel):
     """A System's RMF authorization package: assessment results + authorization spine."""
 
     # --- authorization spine (all optional so drafts stay usable) ---

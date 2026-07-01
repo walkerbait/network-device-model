@@ -24,7 +24,7 @@ from typing import Optional
 
 from pydantic import Field, computed_field, field_validator, model_validator
 
-from network_models.base import StrictModel
+from network_models.base import ComputedFieldModel, StrictModel
 from network_models.stig.vocab import SEVERITY_TO_CAT, RuleSeverity
 from network_models.system.vocab import CHECKLIST_STATUSES, ChecklistStatus, ControlStatus
 
@@ -70,7 +70,7 @@ class RuleResult(StrictModel):
 # ---------------------------------------------------------------------------
 # Checklist (one benchmark evaluated against a target — a CKL)
 # ---------------------------------------------------------------------------
-class Checklist(StrictModel):
+class Checklist(ComputedFieldModel):
     """An evaluated STIG checklist (a CKL): one benchmark run against a target.
 
     ``component`` binds the checklist to a :class:`~network_models.system.topology.Component`
