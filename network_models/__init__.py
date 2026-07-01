@@ -22,7 +22,9 @@ from network_models.device import *  # noqa: F401,F403
 from network_models.device import __all__ as _device_all
 from network_models.system import *  # noqa: F401,F403
 from network_models.system import __all__ as _system_all
+from network_models.stig import *  # noqa: F401,F403
+from network_models.stig import __all__ as _stig_all
 
-__all__ = ["StrictModel"] + list(_device_all) + list(_system_all)
+__all__ = ["StrictModel"] + list(_device_all) + list(_system_all) + list(_stig_all)
 
 __version__ = "0.1.0"

@@ -8,3 +8,5 @@ build/
 
 # Locally converted device definitions (generated from devicetype-library)
 converted/
+# Local STIG content (checklists / benchmarks)
+U_SRG-STIG_Library_April_2026/
