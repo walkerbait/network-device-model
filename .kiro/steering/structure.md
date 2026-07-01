@@ -25,12 +25,12 @@ network_models/
     components.py      #   Interface, ConsolePort, PowerPort, ...
     definition.py      #   DeviceDefinition, DeviceDefinitionLibrary, STIG, NaC
   stig/                # STIG catalog + vocab
-    vocab.py
-    catalog.py
+    vocab.py           #   RuleSeverity, StigType, AssignmentStatus, TargetLayer
+    catalog.py         #   StigRule, StigProfile, Stig, StigCatalog
   system/              # deployed *system* topology + L2 config
     vocab.py           #   classification/environment/ATO + L2 enums
     l2.py              #   Vlan, VlanRange, TrunkAllowedVlans, Switchport, SpanningTree
-    topology.py        #   Enclave, Component, Endpoint, Connection, System
+    topology.py        #   Enclave, Component, Endpoint, Connection, System, StigAssignment
 ```
 
 ## Conventions for placement

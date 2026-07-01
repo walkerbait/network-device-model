@@ -54,7 +54,7 @@ graph TD
 
 ## Tasks
 
-- [ ] 1. Revise `network_models/stig/vocab.py` with the full vocabulary set
+- [X] 1. Revise `network_models/stig/vocab.py` with the full vocabulary set
   - Keep `RULE_SEVERITIES` (`high`/`medium`/`low`/`unknown`) and `SEVERITY_TO_CAT`.
   - Add value lists `STIG_TYPES = ["srg", "stig"]`, `ASSIGNMENT_STATUSES =
     ["not_assessed", "compliant", "open", "not_applicable", "inherited_pending"]`,
@@ -65,7 +65,7 @@ graph TD
     explaining verbatim-from-XCCDF intent and stdlib/pydantic-only portability.
   - _Requirements: 1.2, 1.5, 1.6, 2.1, 4.2, 10.6_ (design §2.1)
 
-- [ ] 2. Revise `network_models/stig/catalog.py` — `StigRule` at full granularity
+- [X] 2. Revise `network_models/stig/catalog.py` — `StigRule` at full granularity
   - Fields per design §2.2: `group_id`, `rule_id`, `stig_id` (optional), `severity`
     (`RuleSeverity`), `weight` (optional float, `ge=0`, `allow_inf_nan=False`),
     `title`, `discussion` (optional), `check_content`, `check_content_ref`,
@@ -77,7 +77,7 @@ graph TD
     `legacy_ids`.
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.6, 4.7_ (design §2.2)
 
-- [ ] 3. Add `StigProfile` and revise `Stig` / `StigCatalog`
+- [X] 3. Add `StigProfile` and revise `Stig` / `StigCatalog`
   - Add `StigProfile` (`id`, optional `title`, `selected_rule_ids: list[str]`) with
     a `_unique_selection` field validator (no duplicate rule ids).
   - Revise `Stig` fields per design §2.2: `benchmark_id`, `title`, `version`,
@@ -96,7 +96,7 @@ graph TD
     top-level `network_models/__init__.py` re-export the new names.
   - _Requirements: 1.1, 1.6, 2.3, 2.4, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.1, 6.2, 6.3, 12.1, 12.2, 12.3, 12.4, 12.5_ (design §2.2)
 
-- [ ] 4. Create `tests/test_stig_catalog.py` — catalog model tests
+- [X] 4. Create `tests/test_stig_catalog.py` — catalog model tests
   - A small valid `Stig`/`StigCatalog` fixture (a few rules, one profile).
   - Catalog uniqueness: duplicate `(benchmark_id, version)` raises; distinct keys
     construct (Req 3.4, 3.5).
@@ -116,7 +116,7 @@ graph TD
     status_date wins; last-seen fallback when no dates (Req 12.1–12.5).
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 3.4, 3.5, 4.3, 4.4, 4.6, 4.7, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.2, 7.1, 7.2, 12.1, 12.2, 12.3, 12.4, 12.5_
 
-- [ ] 5. Revise `ApplicableStig` to concept-only in `network_models/device/definition.py`
+- [X] 5. Revise `ApplicableStig` to concept-only in `network_models/device/definition.py`
   - `ApplicableStig`: keep `benchmark_id` (required) + optional `title`; **remove**
     the `version` field.
   - Change `DeviceDefinition._unique_applicable_stigs` to enforce uniqueness on
@@ -129,7 +129,7 @@ graph TD
   - Update device `__all__` only if a new public name is added (method needs none).
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 9.1, 9.2, 9.3_ (design §2.3)
 
-- [ ] 6. Migrate affected device STIG tests in `tests/test_models.py`
+- [X] 6. Migrate affected device STIG tests in `tests/test_models.py`
   - Drop the `version` key from `VALID["applicable_stigs"]` fixtures.
   - `test_duplicate_stig_benchmark_id_rejected`: assert duplicate `benchmark_id`
     alone is rejected (no version differentiator).
@@ -143,7 +143,7 @@ graph TD
     supplied and an id is missing.
   - _Requirements: 8.3, 8.4, 9.1, 9.2, 9.3, 14.4, 14.7, 14.8_
 
-- [ ] 7. Add `StigAssignment` and wire it into `Component` (`network_models/system/topology.py`)
+- [X] 7. Add `StigAssignment` and wire it into `Component` (`network_models/system/topology.py`)
   - Add `from network_models.stig.vocab import AssignmentStatus` (portable-internal).
   - Define `StigAssignment` (`benchmark_id`, `version`, `status:
     AssignmentStatus = AssignmentStatus("not_assessed")`, optional `assessed_date:
@@ -160,7 +160,7 @@ graph TD
     re-export.
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 11.1, 11.2, 11.3, 11.4, 11.5_ (design §2.4)
 
-- [ ] 8. Create `tests/test_system_stig.py` — component assignment tests
+- [X] 8. Create `tests/test_system_stig.py` — component assignment tests
   - `StigAssignment` default status is `not_assessed`; status outside the closed
     set raises (Req 10.2, 10.6).
   - Duplicate `(benchmark_id, version)` on one component raises (Req 10.4).
@@ -173,7 +173,7 @@ graph TD
     (Req 11.4, 11.5).
   - _Requirements: 10.2, 10.4, 10.5, 10.6, 11.1, 11.2, 11.3, 11.4, 11.5, 14.5, 14.6, 14.8_
 
-- [ ] 9. Implement `scripts/import_stig_library.py` validation harness
+- [X] 9. Implement `scripts/import_stig_library.py` validation harness
   - Mirror `scripts/import_devicetype_library.py` structure (argparse, `sys.path`
     insert, `--out` with a default gitignored dir, grouped failure summary, manifest).
   - `COLLECT_XCCDF(path)`: accept a directory of ZIPs, a single `*.zip`, a loose
@@ -195,7 +195,7 @@ graph TD
     source_file) into `stig_catalog/`.
   - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 13.8, 13.9_ (design §2.5)
 
-- [ ] 10. Run the harness against the real DISA bundle and reconcile
+- [X] 10. Run the harness against the real DISA bundle and reconcile
   - Run `.venv/bin/python scripts/import_stig_library.py U_SRG-STIG_Library_April_2026`
     (also test the loose `U_AAA_Services_SRG_V2R2_Manual-xccdf.xml` and `--out`).
   - Iterate on the parser/model until the 188-entry bundle validates 100% or every
@@ -204,7 +204,7 @@ graph TD
     legitimately malformed upstream.
   - _Requirements: 13.5, 13.6, 13.7, 13.9_
 
-- [ ] 11. Repository hygiene and final verification
+- [X] 11. Repository hygiene and final verification
   - Add `stig_catalog/` to `.gitignore` (Req 15.1).
   - Confirm `network_models/stig` is reflected in steering `structure.md` (note the
     app-layer boundary for ComplianceCheck / suggestion mapping / upload importer /

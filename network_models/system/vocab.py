@@ -11,7 +11,7 @@ from pydantic import Field
 
 from network_models._enum import _str_enum
 
-SYSTEM_SCHEMA_VERSION = "0.1-draft"
+SYSTEM_SCHEMA_VERSION = "0.2-draft"
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +50,55 @@ LinkMedia = _str_enum("LinkMedia", LINK_MEDIA)
 
 
 # ---------------------------------------------------------------------------
+# Authorization-package (RMF / OpenRMF) vocabularies
+# ---------------------------------------------------------------------------
+# CKL / STIG Viewer rule-result status values (verbatim wire strings), used for
+# evaluated checklist results and the OpenRMF-style scoring rollup.
+CHECKLIST_STATUSES = ["Open", "NotAFinding", "Not_Reviewed", "Not_Applicable"]
+
+# NIST SP 800-53(A) control assessment states.
+CONTROL_STATUSES = [
+    "compliant",
+    "non_compliant",
+    "not_applicable",
+    "not_assessed",
+    "inherited",
+    "planned",
+]
+
+# POA&M lifecycle states (RMF) and per-milestone states.
+POAM_STATUSES = ["ongoing", "completed", "risk_accepted", "not_started"]
+MILESTONE_STATUSES = ["pending", "in_progress", "completed", "delayed"]
+
+# FIPS-199 impact levels, ordered least -> most (index drives the categorization
+# high-water mark, mirroring CLASSIFICATION_LEVEL above).
+IMPACT_LEVELS = ["LOW", "MODERATE", "HIGH"]
+IMPACT_LEVEL_RANK = {name: idx for idx, name in enumerate(IMPACT_LEVELS)}
+
+ChecklistStatus = _str_enum("ChecklistStatus", CHECKLIST_STATUSES)
+ControlStatus = _str_enum("ControlStatus", CONTROL_STATUSES)
+PoamStatus = _str_enum("PoamStatus", POAM_STATUSES)
+MilestoneStatus = _str_enum("MilestoneStatus", MILESTONE_STATUSES)
+ImpactLevel = _str_enum("ImpactLevel", IMPACT_LEVELS)
+
+# XCCDF <rule-result><result> value -> CKL ChecklistStatus. The SCAP importer in
+# network_models.io reads this as its single source of truth; unmapped values are
+# treated conservatively as Not_Reviewed. error/unknown/informational are
+# un-reviewed; pass/fixed pass; notapplicable/notselected are N/A.
+XCCDF_RESULT_TO_STATUS = {
+    "pass": "NotAFinding",
+    "fixed": "NotAFinding",
+    "fail": "Open",
+    "notchecked": "Not_Reviewed",
+    "error": "Not_Reviewed",
+    "unknown": "Not_Reviewed",
+    "informational": "Not_Reviewed",
+    "notapplicable": "Not_Applicable",
+    "notselected": "Not_Applicable",
+}
+
+
+# ---------------------------------------------------------------------------
 # Layer-2 vocabularies (aligned verbatim with the Cisco NaC IOS-XE ethernet
 # interface schema so a generator can map these to NaC YAML near-directly).
 #   https://netascode.cisco.com/docs/data_models/iosxe/interface/ethernet/
@@ -84,6 +133,9 @@ __all__ = [
     "CLASSIFICATIONS", "CLASSIFICATION_LEVEL", "ENVIRONMENTS", "ATO_STATUSES",
     "LINK_MEDIA", "SWITCHPORT_MODES", "PORT_CHANNEL_MODES", "STP_GUARD_MODES",
     "STP_LINK_TYPES",
+    "CHECKLIST_STATUSES", "CONTROL_STATUSES", "POAM_STATUSES", "MILESTONE_STATUSES",
+    "IMPACT_LEVELS", "IMPACT_LEVEL_RANK", "XCCDF_RESULT_TO_STATUS",
     "Classification", "Environment", "AtoStatus", "LinkMedia",
     "SwitchportMode", "PortChannelMode", "StpGuard", "StpLinkType", "VlanId",
+    "ChecklistStatus", "ControlStatus", "PoamStatus", "MilestoneStatus", "ImpactLevel",
 ]

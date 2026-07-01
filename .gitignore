@@ -10,3 +10,5 @@ build/
 converted/
 # Local STIG content (checklists / benchmarks)
 U_SRG-STIG_Library_April_2026/
+# Generated STIG catalog JSON (from import_stig_library.py --out)
+stig_catalog/

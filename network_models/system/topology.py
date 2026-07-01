@@ -14,13 +14,19 @@ between component interfaces. It mirrors the System Viewer design:
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Optional
+from datetime import date, datetime
+from typing import TYPE_CHECKING, Optional
 
 from pydantic import Field, IPvAnyAddress, StrictBool, field_validator, model_validator
 
+if TYPE_CHECKING:
+    from network_models.device.definition import DeviceDefinitionLibrary
+    from network_models.stig.catalog import StigCatalog
+
 from network_models.base import StrictModel
 from network_models.device.vocab import DeviceCategory
+from network_models.stig.vocab import AssignmentStatus
+from network_models.system.authorization import AuthorizationPackage
 from network_models.system.l2 import SpanningTree, Switchport, Vlan
 from network_models.system.vocab import (
     CLASSIFICATION_LEVEL,
@@ -32,6 +38,25 @@ from network_models.system.vocab import (
     PortChannelMode,
     SwitchportMode,
 )
+
+
+# ---------------------------------------------------------------------------
+# StigAssignment (a STIG pinned to a component at a concrete version)
+# ---------------------------------------------------------------------------
+class StigAssignment(StrictModel):
+    """A STIG pinned to a deployed component at a concrete version, with status.
+
+    Listed explicitly on the component (NOT auto-derived from the device
+    definition) so an instance may legitimately deviate — e.g. sit one release
+    behind, or carry a STIG its type doesn't declare. Per-rule findings are NOT
+    stored here; that is the app-layer ComplianceCheck evaluator's output.
+    """
+
+    benchmark_id: str = Field(..., min_length=1, description="Join key to StigCatalog")
+    version: str = Field(..., min_length=1, description="Pinned release, e.g. 'V5R3'")
+    status: AssignmentStatus = AssignmentStatus("not_assessed")
+    assessed_date: Optional[date] = None
+    notes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +92,17 @@ class Component(StrictModel):
     mgmt_ip: Optional[IPvAnyAddress] = None
     role: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
+    stig_assignments: list[StigAssignment] = Field(
+        default_factory=list,
+        description="Pinned STIG versions with assessment status, listed explicitly",
+    )
+
+    @model_validator(mode="after")
+    def _unique_stig_assignments(self) -> "Component":
+        keys = [(a.benchmark_id, a.version) for a in self.stig_assignments]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate (benchmark_id, version) in stig_assignments")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +204,12 @@ class System(StrictModel):
         description="System-wide VLAN table; switchport VLAN ids must resolve here",
     )
 
+    # --- Authorization package (RMF / OpenRMF) ---
+    authorization: Optional[AuthorizationPackage] = Field(
+        default=None,
+        description="Evaluated checklists, 800-53 controls, POA&M, categorization, ATO",
+    )
+
     schema_version: str = SYSTEM_SCHEMA_VERSION
 
     # -- derived views --
@@ -223,6 +265,21 @@ class System(StrictModel):
                     raise ValueError(
                         f"connection references unknown component '{end.component}'"
                     )
+        # Authorization-package back-references (checklists / POA&M) must resolve
+        # to a component too; validated here at the System level since the package
+        # itself cannot see the topology.
+        if self.authorization is not None:
+            for cl in self.authorization.checklists:
+                if cl.component is not None and cl.component not in component_ids:
+                    raise ValueError(
+                        f"checklist '{cl.benchmark_id}' references unknown "
+                        f"component '{cl.component}'"
+                    )
+            for p in self.authorization.poam_items:
+                if p.component is not None and p.component not in component_ids:
+                    raise ValueError(
+                        f"POA&M '{p.id}' references unknown component '{p.component}'"
+                    )
         return self
 
     @model_validator(mode="after")
@@ -252,7 +309,42 @@ class System(StrictModel):
                     )
         return self
 
+    # -- opt-in STIG assignment resolution (not model_validators) --
+
+    def validate_stig_assignments(self, catalog: "StigCatalog") -> "System":
+        """Assert every component's assignments resolve to a catalog (benchmark_id, version).
+
+        Opt-in: call explicitly when a catalog is available. Standalone validation
+        (no catalog) never requires assignment resolution, so systems with unresolved
+        pins still construct. Returns self for chaining.
+        """
+        for c in self.components:
+            for a in c.stig_assignments:
+                if catalog.get(a.benchmark_id, a.version) is None:
+                    raise ValueError(
+                        f"component '{c.id}' pins unresolved STIG "
+                        f"({a.benchmark_id}, {a.version})"
+                    )
+        return self
+
+    def stig_divergences(
+        self, definitions: "DeviceDefinitionLibrary"
+    ) -> list[tuple[str, str]]:
+        """Return (component_id, benchmark_id) pairs a component assigns but its
+        device definition does not declare. WARN-only: never raises. Empty list
+        means every assignment is backed by the type's applicable_stigs.
+        """
+        by_slug = {d.slug: d for d in definitions.definitions}
+        out: list[tuple[str, str]] = []
+        for c in self.components:
+            d = by_slug.get(c.device_definition) if c.device_definition else None
+            declared = {s.benchmark_id for s in d.applicable_stigs} if d else set()
+            for a in c.stig_assignments:
+                if a.benchmark_id not in declared:
+                    out.append((c.id, a.benchmark_id))
+        return out
+
 
 __all__ = [
-    "Enclave", "Component", "Endpoint", "Connection", "System",
+    "StigAssignment", "Enclave", "Component", "Endpoint", "Connection", "System",
 ]

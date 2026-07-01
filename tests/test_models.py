@@ -42,8 +42,8 @@ VALID = {
         {"name": "F1", "type": "8p8c", "rear_port": "R1", "rear_port_position": 1}
     ],
     "applicable_stigs": [
-        {"benchmark_id": "CISCO_IOS_XE_SW_NDM", "title": "Cisco IOS XE Switch NDM STIG", "version": "V2R9"},
-        {"benchmark_id": "CISCO_IOS_XE_SW_L2S", "version": "V2R5"},
+        {"benchmark_id": "CISCO_IOS_XE_SW_NDM", "title": "Cisco IOS XE Switch NDM STIG"},
+        {"benchmark_id": "CISCO_IOS_XE_SW_L2S"},
     ],
     "baseline_layers": {"common": "ios-xe-common-v2.1", "role": "switch-baseline-v1.5"},
     "nac": {
@@ -85,9 +85,9 @@ def test_50g_sfp28_accepted():
 def test_multiple_stigs_supported():
     """A device may carry many distinct STIGs; all are preserved in order."""
     stigs = [
-        {"benchmark_id": "CISCO_IOS_XE_SW_NDM", "title": "NDM STIG", "version": "V2R9"},
-        {"benchmark_id": "CISCO_IOS_XE_SW_L2S", "version": "V2R5"},
-        {"benchmark_id": "CISCO_IOS_XE_SW_RTR", "version": "V3R1"},
+        {"benchmark_id": "CISCO_IOS_XE_SW_NDM", "title": "NDM STIG"},
+        {"benchmark_id": "CISCO_IOS_XE_SW_L2S"},
+        {"benchmark_id": "CISCO_IOS_XE_SW_RTR"},
         {"benchmark_id": "APP_GENERAL"},
     ]
     d = DeviceDefinition(**{**VALID, "applicable_stigs": stigs})
@@ -105,22 +105,78 @@ def test_multiple_stigs_survive_roundtrip():
 
 
 def test_duplicate_stig_benchmark_id_rejected():
-    """Same benchmark_id AND same version is a true duplicate -> rejected."""
+    """Duplicate benchmark_id alone is rejected (version removed from device type)."""
     with pytest.raises(ValidationError):
         DeviceDefinition(**{**VALID, "applicable_stigs": [
-            {"benchmark_id": "DUP", "version": "V1R1"},
-            {"benchmark_id": "DUP", "version": "V1R1"},
+            {"benchmark_id": "DUP"},
+            {"benchmark_id": "DUP"},
         ]})
 
 
-def test_same_stig_different_versions_allowed():
-    """The same benchmark may be attached at multiple distinct versions."""
-    d = DeviceDefinition(**{**VALID, "applicable_stigs": [
-        {"benchmark_id": "CISCO_IOS_XE_SW_NDM", "version": "V2R9"},
-        {"benchmark_id": "CISCO_IOS_XE_SW_NDM", "version": "V3R1"},
-    ]})
-    assert len(d.applicable_stigs) == 2
-    assert {s.version for s in d.applicable_stigs} == {"V2R9", "V3R1"}
+def test_same_benchmark_id_always_rejected():
+    """Same benchmark_id is now always rejected (version is no longer a differentiator)."""
+    with pytest.raises(ValidationError):
+        DeviceDefinition(**{**VALID, "applicable_stigs": [
+            {"benchmark_id": "CISCO_IOS_XE_SW_NDM"},
+            {"benchmark_id": "CISCO_IOS_XE_SW_NDM"},
+        ]})
+
+
+def test_validate_against_catalog_standalone():
+    """DeviceDefinition validates standalone with no catalog (Req 9.1)."""
+    d = DeviceDefinition(**VALID)
+    # No catalog — construction succeeds regardless of applicable_stigs content
+    assert d.applicable_stigs[0].benchmark_id == "CISCO_IOS_XE_SW_NDM"
+
+
+def test_validate_against_catalog_all_resolve():
+    """validate_against_catalog passes when all benchmark_ids resolve (Req 9.2)."""
+    from network_models import StigCatalog, Stig
+
+    d = DeviceDefinition(**VALID)
+    catalog = StigCatalog(
+        catalog_version="test",
+        stigs=[
+            Stig(
+                benchmark_id="CISCO_IOS_XE_SW_NDM",
+                title="NDM STIG",
+                version="1",
+                type="stig",
+                source_file="test.zip",
+            ),
+            Stig(
+                benchmark_id="CISCO_IOS_XE_SW_L2S",
+                title="L2S STIG",
+                version="1",
+                type="stig",
+                source_file="test.zip",
+            ),
+        ],
+    )
+    result = d.validate_against_catalog(catalog)
+    assert result is d  # returns self for chaining
+
+
+def test_validate_against_catalog_raises_on_missing():
+    """validate_against_catalog raises identifying unresolved ids (Req 9.3)."""
+    from network_models import StigCatalog, Stig
+
+    d = DeviceDefinition(**VALID)
+    # Catalog only has one of the two benchmark_ids in VALID
+    catalog = StigCatalog(
+        catalog_version="test",
+        stigs=[
+            Stig(
+                benchmark_id="CISCO_IOS_XE_SW_NDM",
+                title="NDM STIG",
+                version="1",
+                type="stig",
+                source_file="test.zip",
+            ),
+        ],
+    )
+    with pytest.raises(ValueError, match="CISCO_IOS_XE_SW_L2S"):
+        d.validate_against_catalog(catalog)
 
 
 REJECTIONS = [

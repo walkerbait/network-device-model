@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "network-device-model"
-version = "0.1.0"
+version = "0.2.0"
 description = "Strict Pydantic v2 data models for reusable network device definitions (Nautobot + Cisco Network as Code aligned)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,9 @@ dependencies = ["pydantic>=2.5.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+# Ingestion layer (network_models.io): hardened XML parsing for untrusted
+# SCAP/XCCDF and DISA CCI files. Optional — the core stays pydantic-only.
+io = ["defusedxml>=0.7"]
 
 [tool.setuptools.packages.find]
 include = ["network_models*"]

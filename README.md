@@ -67,10 +67,64 @@ DeviceDefinition(..., slug="Cisco Catalyst 9300")                            # V
 DeviceDefinition(..., u_height=1.3)                                          # ValidationError (0.5 increments)
 ```
 
+## Authorization package (RMF / OpenRMF)
+
+A `System` can carry an optional **authorization package** — the RMF authorization
+boundary, inspired by [OpenRMF](https://github.com/Cingulara/openrmf-docs). Where
+the `stig` catalog holds rules *as published*, this holds *evaluated results*:
+
+- **`Checklist` / `RuleResult`** — an evaluated CKL (one benchmark against a
+  component or the whole system); each rule carries a status (`Open`,
+  `NotAFinding`, `Not_Reviewed`, `Not_Applicable`), self-contained severity and
+  CCIs, and finding detail.
+- **`ControlAssessment`** — NIST 800-53 control status; rule results roll up to
+  controls via the package's `cci_control_map` (CCI → control ids).
+- **`PoamItem` / `Milestone`** — Plan of Action & Milestones entries, with
+  traceability back to the finding they came from.
+- **`Categorization`** — FIPS-199 C/I/A impact triad (with derived overall
+  high-water), plus authorizing official and ATO dates.
+
+Scores are OpenRMF-style and exposed as serialized `@computed_field`s: a
+conservative `compliance_score` (Not_Reviewed counts against) alongside a
+`coverage` percent, with `status_counts` / `cat_open_counts` (CAT I/II/III),
+per-checklist and system-wide. `AuthorizationPackage` also offers
+`rolled_up_control_status()` and a non-mutating `draft_poam_from_findings()`.
+
+```python
+from network_models import System, AuthorizationPackage, Checklist
+
+sys = System(
+    id="SYS-00428", name="Edge", enclaves=[{"name": "dmz", "classification": "CUI"}],
+    components=[{"id": "edge-fw-01", "enclave": "dmz", "category": "firewall"}],
+    authorization=AuthorizationPackage(checklists=[Checklist(
+        benchmark_id="CISCO_IOS_XE_NDM", component="edge-fw-01",
+        results=[{"rule_id": "SV-1_rule", "severity": "high", "status": "Open"}],
+    )]),
+)
+sys.authorization.compliance_score      # -> 0.0
+sys.authorization.draft_poam_from_findings()  # -> [PoamItem(...)]
+```
+
+### Ingestion (`network_models.io`, opt-in)
+
+Parsers that build these models from files live in a separate, opt-in layer so the
+core stays pydantic-only:
+
+```python
+from network_models.io import parse_xccdf_results, parse_cci_list
+
+checklist = parse_xccdf_results("results.xml", component="edge-fw-01")  # SCAP/XCCDF result
+cci_map = parse_cci_list("U_CCI_List.xml")                              # DISA CCI -> 800-53
+```
+
+Install the `io` extra for hardened XML parsing of untrusted content
+(`pip install network-device-model[io]`); without it the stdlib parser is used as
+an XXE-safe (but not DoS-hardened) fallback.
+
 ## Package structure
 
-The package is split into two domains under `network_models/`, with shared
-building blocks at the top:
+The package is split into domains under `network_models/`, with shared building
+blocks at the top:
 
 ```
 network_models/
@@ -80,14 +134,23 @@ network_models/
     vocab.py           #   value lists + enums (Nautobot + NaC vocab)
     components.py      #   Interface, ConsolePort, PowerPort, ...
     definition.py      #   DeviceDefinition, DeviceDefinitionLibrary, STIG, NaC
-  system/              # deployed *system* topology + L2 config
-    vocab.py           #   classification/environment/ATO + L2 (switchport/VLAN) enums
+  system/              # deployed *system* topology + L2 + authorization package
+    vocab.py           #   classification/environment/ATO + L2 + RMF status enums
     l2.py              #   Vlan, VlanRange, TrunkAllowedVlans, Switchport, SpanningTree
     topology.py        #   Enclave, Component, Endpoint, Connection, System
+    assessment.py      #   RuleResult, Checklist, ControlAssessment (+ scoring)
+    poam.py            #   Milestone, PoamItem
+    authorization.py   #   Categorization, AuthorizationPackage
+  io/                  # opt-in ingestion (NOT imported by the core)
+    scap.py            #   parse_xccdf_results (SCAP/XCCDF result -> Checklist)
+    cci.py             #   parse_cci_list (DISA U_CCI_List.xml -> CCI->control map)
+    consistency.py     #   check_result_consistency (result vs catalog drift)
 ```
 
-Everything is re-exported from the top level (`from network_models import ...`),
-and each domain is also importable directly (`from network_models.system import System`).
+Everything except the `io` layer is re-exported from the top level
+(`from network_models import ...`), and each domain is also importable directly
+(`from network_models.system import System`). Ingestion is imported explicitly
+(`from network_models.io import parse_xccdf_results`).
 
 ## Model map
 

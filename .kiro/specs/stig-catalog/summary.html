@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ralph Loop for Kiro Specs</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface-hover: #252833;
+  --border: #2d3140;
+  --text: #e4e7ef;
+  --text-muted: #8b90a0;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --success: #22c55e;
+  --success-bg: rgba(34,197,94,0.1);
+  --error: #ef4444;
+  --error-bg: rgba(239,68,68,0.1);
+  --warning: #f59e0b;
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  padding: 24px;
+  min-height: 100vh;
+}
+h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; }
+h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 8px; color: var(--text-muted); }
+
+.header { margin-bottom: 24px; }
+.header p { color: var(--text-muted); font-size: 0.9rem; }
+
+.global-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: center;
+}
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.status-badge.green { background: var(--success-bg); color: var(--success); border: 1px solid var(--success); }
+.status-badge.red { background: var(--error-bg); color: var(--error); border: 1px solid var(--error); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; }
+.status-badge.green .status-dot { background: var(--success); }
+.status-badge.red .status-dot { background: var(--error); }
+
+.stats { display: flex; gap: 20px; flex-wrap: wrap; }
+.stat { text-align: center; }
+.stat .value { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+.stat .label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+.spec-name { font-size: 1.1rem; font-weight: 600; color: var(--accent); }
+
+.main-layout { display: flex; gap: 24px; }
+.left-pane { flex: 0 0 60%; min-width: 0; }
+.right-pane { flex: 0 0 38%; min-width: 0; }
+
+@media (max-width: 900px) {
+  .main-layout { flex-direction: column; }
+  .left-pane, .right-pane { flex: 1 1 auto; }
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+.tree-node { margin-bottom: 4px; }
+.tree-toggle {
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s;
+  position: relative;
+}
+.tree-toggle:hover { background: var(--surface-hover); }
+.tree-arrow {
+  display: inline-block;
+  width: 16px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.tree-node.expanded > .tree-toggle > .tree-arrow { transform: rotate(90deg); }
+.tree-children { margin-left: 24px; display: none; }
+.tree-node.expanded > .tree-children { display: block; }
+.tree-leaf {
+  padding: 4px 10px 4px 34px;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  position: relative;
+}
+.tree-leaf:hover { background: var(--surface-hover); }
+.check { margin-right: 6px; font-size: 0.85rem; }
+.check.done { color: var(--success); }
+.check.fail { color: var(--error); }
+.check.pending { color: var(--warning); }
+
+.tooltip {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  margin-left: 12px;
+  background: #252833;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  width: 380px;
+  font-size: 0.82rem;
+  color: var(--text);
+  z-index: 100;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  line-height: 1.5;
+}
+.tree-toggle:hover .tooltip,
+.tree-leaf:hover .tooltip { display: block; }
+.tooltip strong { color: var(--accent); display: block; margin-bottom: 4px; }
+.tooltip ul { margin: 4px 0 4px 16px; }
+.tooltip li { margin-bottom: 2px; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface-hover); }
+
+details {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+details summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+}
+details summary:hover { color: var(--text); }
+details[open] summary { border-bottom: 1px solid var(--border); }
+details .content { padding: 12px; font-size: 0.82rem; line-height: 1.6; }
+details .content p { margin-bottom: 6px; }
+details .content ul { margin: 4px 0 8px 18px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Ralph Loop for Kiro Specs</h1>
+  <p>Implementation summary for spec-driven development</p>
+</div>
+
+<div class="global-summary">
+  <div>
+    <div class="spec-name">stig-catalog</div>
+    <div style="font-size:0.82rem;color:var(--text-muted);margin-top:2px;">STIG catalog models, device concept-ref, system assignments &amp; harness</div>
+  </div>
+  <div class="status-badge green"><span class="status-dot"></span> COMPLETE</div>
+  <div class="stats">
+    <div class="stat"><div class="value">11</div><div class="label">Tasks</div></div>
+    <div class="stat"><div class="value">21m 59s</div><div class="label">Total Time</div></div>
+    <div class="stat"><div class="value">8</div><div class="label">Files Changed</div></div>
+    <div class="stat"><div class="value">2</div><div class="label">Corrections</div></div>
+    <div class="stat"><div class="value">5</div><div class="label">Patterns</div></div>
+  </div>
+  <div style="font-size:0.82rem;color:var(--text-muted);">2026-07-01 11:53:21 → 2026-07-01 12:41:20</div>
+</div>
+
+<details>
+  <summary>📋 Corrections (2)</summary>
+  <div class="content">
+    <ul>
+      <li>❌ <code>from network_models.stig.vocab import ...</code> (via package init) → ✅ Test vocab.py in isolation when catalog.py is broken</li>
+      <li>❌ Running <code>python -m pytest</code> while catalog.py is broken → ✅ Wait until catalog.py is revised in task 2/3 before running full test suite</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>🔍 Codebase Patterns (5)</summary>
+  <div class="content">
+    <ul>
+      <li>Package <code>network_models/</code> is Pydantic v2 + stdlib only (portable). Parsing/IO tooling belongs in <code>scripts/</code>.</li>
+      <li>Run tests with <code>python -m pytest tests/ -q</code>.</li>
+      <li>Enums built via <code>_str_enum(name, value_list)</code> from <code>network_models/_enum.py</code>. Value lists are module-level constants. Member names are auto-derived (upper-snake). <code>str()</code> returns the value.</li>
+      <li><code>stig/__init__.py</code> uses star-imports from <code>vocab</code> and <code>catalog</code>, combining their <code>__all__</code> lists. New exports flow automatically.</li>
+      <li>Using <code>TYPE_CHECKING</code> import for cross-domain references within the portable package keeps runtime import direction clean.</li>
+    </ul>
+  </div>
+</details>
+
+<div class="main-layout" style="margin-top: 24px;">
+  <div class="left-pane">
+    <div class="panel">
+      <h2>Task Tree</h2>
+
+      <div class="tree-node expanded">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>1. Revise stig/vocab.py with the full vocabulary set</span>
+          <div class="tooltip"><strong>Task 1</strong><ul><li>Added STIG_TYPES, ASSIGNMENT_STATUSES, TARGET_LAYERS value lists</li><li>Built StigType, AssignmentStatus, TargetLayer enums via _str_enum</li><li>Files: network_models/stig/vocab.py</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Keep RULE_SEVERITIES and SEVERITY_TO_CAT</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Add STIG_TYPES, ASSIGNMENT_STATUSES, TARGET_LAYERS</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Build StigType, AssignmentStatus, TargetLayer via _str_enum</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Update __all__ exports</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>2. Revise catalog.py — StigRule at full granularity</span>
+          <div class="tooltip"><strong>Task 2</strong><ul><li>Added weight, check_content, check_content_ref, check_system, fix_id, legacy_ids</li><li>Removed check_text and expected_config</li><li>Files: network_models/stig/catalog.py</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Fields per design §2.2</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Remove check_text and expected_config</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Replace _unique_ccis with _unique_idents</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>3. Add StigProfile and revise Stig / StigCatalog</span>
+          <div class="tooltip"><strong>Task 3</strong><ul><li>Added StigProfile with _unique_selection validator</li><li>Revised Stig: added release_info, status, status_date, type, source_file, profiles; dropped release, date, technology, source_url</li><li>Revised StigCatalog: renamed version→catalog_version; added versions() and latest_version()</li><li>Files: network_models/stig/catalog.py</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Add StigProfile model</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Revise Stig fields per design</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Add _profiles_resolve and _unique_profile_ids validators</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Revise StigCatalog: rename version→catalog_version</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Add versions() and latest_version() methods</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>4. Create tests/test_stig_catalog.py</span>
+          <div class="tooltip"><strong>Task 4</strong><ul><li>34 tests covering: catalog uniqueness, type enum, severity/CAT, severity_counts, profile resolution, rule uniqueness, JSON round-trip, latest_version, StrictModel behavior</li><li>Files: tests/test_stig_catalog.py (new)</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Catalog uniqueness tests</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Type enum and benchmark_ids filtering</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Severity/CAT derivation tests</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Profile resolution tests</div>
+          <div class="tree-leaf"><span class="check done">✓</span> JSON round-trip fidelity</div>
+          <div class="tree-leaf"><span class="check done">✓</span> latest_version tests</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>5. Revise ApplicableStig to concept-only</span>
+          <div class="tooltip"><strong>Task 5</strong><ul><li>Removed version field from ApplicableStig</li><li>Changed uniqueness to benchmark_id alone</li><li>Added validate_against_catalog() opt-in method</li><li>Files: network_models/device/definition.py, tests/test_models.py</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Remove version field</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Enforce uniqueness on benchmark_id alone</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Add validate_against_catalog() method</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>6. Migrate affected device STIG tests</span>
+          <div class="tooltip"><strong>Task 6</strong><ul><li>Added validate_against_catalog tests: standalone ok, resolves ok, raises on missing</li><li>Prior migrations (drop version, benchmark_id-only rejection) done in Task 5</li><li>Files: tests/test_models.py</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Drop version from fixtures</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Migrate duplicate benchmark_id test</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Add validate_against_catalog tests</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>7. Add StigAssignment and wire into Component</span>
+          <div class="tooltip"><strong>Task 7</strong><ul><li>Added StigAssignment model in system/topology.py</li><li>Added Component.stig_assignments with uniqueness validator</li><li>Added System.validate_stig_assignments() and stig_divergences()</li><li>Files: network_models/system/topology.py</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Define StigAssignment model</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Add Component.stig_assignments field + validator</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Add System.validate_stig_assignments()</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Add System.stig_divergences()</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>8. Create tests/test_system_stig.py</span>
+          <div class="tooltip"><strong>Task 8</strong><ul><li>22 tests covering: default status, closed status set, duplicate rejection, same benchmark different versions, validate_stig_assignments, stig_divergences, field tests</li><li>Files: tests/test_system_stig.py (new)</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Assignment default status and closed set tests</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Duplicate (benchmark_id, version) rejection</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Same benchmark at different versions accepted</div>
+          <div class="tree-leaf"><span class="check done">✓</span> System catalog resolver tests</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Divergence warning tests</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>9. Implement scripts/import_stig_library.py</span>
+          <div class="tooltip"><strong>Task 9</strong><ul><li>Created XCCDF validation harness: collect_xccdf(), parse_benchmark(), main()</li><li>Handles ZIPs, loose XML, profile V-id remapping, VulnDiscussion extraction</li><li>--out writes per-benchmark JSON + catalog_manifest.json</li><li>Files: scripts/import_stig_library.py (new)</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> COLLECT_XCCDF: ZIPs, loose XML, directory</div>
+          <div class="tree-leaf"><span class="check done">✓</span> PARSE_BENCHMARK: full XCCDF 1.1 parser</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Profile V-id to rule_id remapping</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Grouped failure summary and --out support</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>10. Run harness against real DISA bundle</span>
+          <div class="tooltip"><strong>Task 10</strong><ul><li>391/391 XCCDF benchmarks from U_SRG-STIG_Library_April_2026 validate successfully</li><li>Zero failures, zero load errors</li><li>Verified single ZIP, loose XML, and --out JSON generation</li><li>Files: none (validation-only task)</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> 391/391 benchmarks validate (186 ZIPs)</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Single ZIP and loose XML verified</div>
+          <div class="tree-leaf"><span class="check done">✓</span> --out JSON generation verified</div>
+        </div>
+      </div>
+
+      <div class="tree-node">
+        <div class="tree-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="tree-arrow">▶</span>
+          <span class="check done">✓</span>
+          <span>11. Repository hygiene and final verification</span>
+          <div class="tooltip"><strong>Task 11</strong><ul><li>Added stig_catalog/ to .gitignore</li><li>Updated structure.md with stig/ annotations and StigAssignment</li><li>Full suite: 83 passed, 3 skipped</li><li>Converted device definitions validated (no regression)</li><li>Files: .gitignore, .kiro/steering/structure.md</li></ul></div>
+        </div>
+        <div class="tree-children">
+          <div class="tree-leaf"><span class="check done">✓</span> Add stig_catalog/ to .gitignore</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Confirm structure.md reflects realized layout</div>
+          <div class="tree-leaf"><span class="check done">✓</span> Full test suite passes (83 passed, 3 skipped)</div>
+          <div class="tree-leaf"><span class="check done">✓</span> ApplicableStig change didn't regress converted library</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="right-pane">
+    <div class="panel">
+      <h2>Timing</h2>
+      <table>
+        <thead><tr><th>Task</th><th>Start</th><th>End</th><th>Elapsed</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>11:53:21</td><td>11:55:04</td><td>1m 43s</td></tr>
+          <tr><td>2</td><td>11:55:34</td><td>11:57:58</td><td>2m 24s</td></tr>
+          <tr><td>3</td><td>11:58:27</td><td>12:00:46</td><td>2m 19s</td></tr>
+          <tr><td>4</td><td>12:01:16</td><td>12:03:07</td><td>1m 51s</td></tr>
+          <tr><td>5</td><td>12:03:28</td><td>12:05:24</td><td>1m 56s</td></tr>
+          <tr><td>6</td><td>12:06:00</td><td>12:06:58</td><td>0m 58s</td></tr>
+          <tr><td>7</td><td>12:07:34</td><td>12:10:25</td><td>2m 51s</td></tr>
+          <tr><td>8</td><td>12:10:54</td><td>12:12:35</td><td>1m 41s</td></tr>
+          <tr><td>9</td><td>12:12:59</td><td>12:16:50</td><td>3m 51s</td></tr>
+          <tr><td>10</td><td>12:17:14</td><td>12:18:34</td><td>1m 20s</td></tr>
+          <tr><td>11</td><td>12:40:15</td><td>12:41:20</td><td>1m 5s</td></tr>
+        </tbody>
+        <tfoot>
+          <tr style="font-weight:700;border-top:2px solid var(--border)"><td colspan="3">Total</td><td>21m 59s</td></tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// Collapse all tree nodes by default except to show the top level
+document.querySelectorAll('.tree-node').forEach(node => {
+  node.classList.remove('expanded');
+});
+</script>
+</body>
+</html>

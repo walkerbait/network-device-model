@@ -9,9 +9,12 @@ when generating configs for a system or device.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pydantic import Field, StrictBool, field_validator, model_validator
+
+if TYPE_CHECKING:
+    from network_models.stig.catalog import StigCatalog
 
 from network_models.base import StrictModel
 from network_models.device.components import (
@@ -56,11 +59,16 @@ class DeviceImage(StrictModel):
 
 
 class ApplicableStig(StrictModel):
-    """A STIG checklist that applies to this device type."""
+    """A STIG that applies to this device *type*, referenced by concept.
+
+    Version-agnostic on purpose: a device type is subject to a benchmark
+    regardless of which release is current. The concrete version is pinned at the
+    deployed-component layer (system.StigAssignment). ``title`` is an optional
+    denormalized display cache so a picker can render without loading the catalog.
+    """
 
     benchmark_id: str = Field(..., min_length=1)
     title: Optional[str] = None
-    version: Optional[str] = None
 
 
 class BaselineLayers(StrictModel):
@@ -170,13 +178,24 @@ class DeviceDefinition(StrictModel):
 
     @model_validator(mode="after")
     def _unique_applicable_stigs(self) -> "DeviceDefinition":
-        # Uniqueness is on (benchmark_id, version): the same benchmark may appear
-        # at different versions, but the identical benchmark+version may not.
-        keys = [(s.benchmark_id, s.version) for s in self.applicable_stigs]
-        if len(keys) != len(set(keys)):
-            raise ValueError(
-                "duplicate (benchmark_id, version) in applicable_stigs"
-            )
+        # Uniqueness reverts to benchmark_id alone (version now lives on the
+        # deployed Component's StigAssignment, not on the device *type*).
+        ids = [s.benchmark_id for s in self.applicable_stigs]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate benchmark_id in applicable_stigs")
+        return self
+
+    def validate_against_catalog(self, catalog: "StigCatalog") -> "DeviceDefinition":
+        """Assert every applicable STIG resolves to a catalog benchmark_id.
+
+        Opt-in: call explicitly when a catalog is available. Standalone validation
+        (no catalog) never requires resolution, so device libraries with empty or
+        unresolved applicable_stigs still load. Returns self for chaining.
+        """
+        known = set(catalog.benchmark_ids())
+        missing = [s.benchmark_id for s in self.applicable_stigs if s.benchmark_id not in known]
+        if missing:
+            raise ValueError(f"applicable_stigs do not resolve in catalog: {missing}")
         return self
 
     @model_validator(mode="after")
