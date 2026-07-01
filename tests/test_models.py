@@ -1,6 +1,6 @@
 """Self-test for the device-definition models.
 
-Runnable as a script (``python device_definition_models/validate_selftest.py``)
+Runnable as a script (``python -m pytest tests/test_models.py``)
 or under pytest. Proves that a well-formed definition validates and that a
 representative set of malformed inputs are rejected by the strict schema.
 """
@@ -10,12 +10,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from device_definition_models import (
+from network_models import (
     DeviceDefinition,
     DeviceDefinitionLibrary,
     InterfaceType,
 )
-from device_definition_models.models import INTERFACE_TYPES
+from network_models.device.vocab import INTERFACE_TYPES
 
 VALID = {
     "manufacturer": "Cisco",

@@ -1,6 +1,6 @@
-"""DRAFT: strict Pydantic v2 model for a **system** (a deployed network).
+"""The deployed-system topology: enclaves, components, connections, and System.
 
-Where a :class:`~device_definition_models.models.DeviceDefinition` describes a
+Where a :class:`~network_models.device.definition.DeviceDefinition` describes a
 reusable device *type*, a :class:`System` describes a concrete deployment: a set
 of **enclaves** (security zones ordered least -> most classified), the
 **components** (device instances) that live in them, and the **connections**
@@ -10,10 +10,6 @@ between component interfaces. It mirrors the System Viewer design:
     Enclave columns     -> Enclave (name, classification)  [ordered least->most]
     Component nodes     -> Component (id, category, device_definition slug, enclave)
     Connections + trunk -> Connection (endpoint a/b with interface, trunk flag)
-
-This is an early draft: fields and validators are expected to evolve. It reuses
-the strict base model and the device taxonomy from ``models.py`` and depends only
-on ``pydantic>=2.5`` + stdlib, so it stays portable alongside the device models.
 """
 
 from __future__ import annotations
@@ -21,56 +17,21 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import (
-    Field,
-    IPvAnyAddress,
-    StrictBool,
-    field_validator,
-    model_validator,
+from pydantic import Field, IPvAnyAddress, StrictBool, field_validator, model_validator
+
+from network_models.base import StrictModel
+from network_models.device.vocab import DeviceCategory
+from network_models.system.l2 import SpanningTree, Switchport, Vlan
+from network_models.system.vocab import (
+    CLASSIFICATION_LEVEL,
+    SYSTEM_SCHEMA_VERSION,
+    AtoStatus,
+    Classification,
+    Environment,
+    LinkMedia,
+    PortChannelMode,
+    SwitchportMode,
 )
-
-from device_definition_models.models import (
-    DeviceCategory,
-    StrictModel,
-    _str_enum,
-)
-
-SYSTEM_SCHEMA_VERSION = "0.1-draft"
-
-
-# ---------------------------------------------------------------------------
-# Vocabularies
-# ---------------------------------------------------------------------------
-# Classification tiers, ordered least -> most sensitive. The index is the
-# ordering used to lay enclaves out left -> right and to compute the system's
-# high-water mark.
-CLASSIFICATIONS = [
-    "UNCLASSIFIED",
-    "CUI",
-    "CONFIDENTIAL",
-    "SECRET",
-    "TOP_SECRET",
-    "TS_SCI",
-]
-CLASSIFICATION_LEVEL = {name: idx for idx, name in enumerate(CLASSIFICATIONS)}
-
-ENVIRONMENTS = ["production", "staging", "development", "test", "lab"]
-ATO_STATUSES = [
-    "authorized",
-    "in_process",
-    "reauthorization",
-    "expired",
-    "denied",
-    "not_started",
-]
-
-# Physical/logical media of a connection (drives styling; trunk is separate).
-LINK_MEDIA = ["copper", "fiber", "wireless", "serial", "virtual", "other"]
-
-Classification = _str_enum("Classification", CLASSIFICATIONS)
-Environment = _str_enum("Environment", ENVIRONMENTS)
-AtoStatus = _str_enum("AtoStatus", ATO_STATUSES)
-LinkMedia = _str_enum("LinkMedia", LINK_MEDIA)
 
 
 # ---------------------------------------------------------------------------
@@ -112,13 +73,41 @@ class Component(StrictModel):
 # Connection (a link between two component interfaces)
 # ---------------------------------------------------------------------------
 class Endpoint(StrictModel):
-    """One end of a connection: a component and the interface it terminates on."""
+    """One end of a connection: a component and the interface(s) it terminates on.
+
+    A single physical link uses ``interface``. An aggregated (LAG / port-channel)
+    link uses ``members`` to list the bundled physical interfaces, mirroring NaC's
+    ``port_channel_id`` / ``port_channel_mode`` on the member ethernets.
+    """
 
     component: str = Field(..., min_length=1, description="Component id")
     interface: Optional[str] = Field(
         None,
         description="Interface name on the component's device definition, e.g. 'Gi0/2'",
     )
+    members: list[str] = Field(
+        default_factory=list,
+        description="Physical member interfaces when this end is a LAG/port-channel",
+    )
+    port_channel_id: Optional[int] = Field(None, ge=1, le=512)
+    port_channel_mode: Optional[PortChannelMode] = None
+    switchport: Optional[Switchport] = None
+    spanning_tree: Optional[SpanningTree] = None
+
+    @model_validator(mode="after")
+    def _lag_consistency(self) -> "Endpoint":
+        if self.members and self.interface is not None:
+            raise ValueError(
+                "endpoint uses either 'interface' (single link) or 'members' (LAG), not both"
+            )
+        if self.members:
+            if len(self.members) != len(set(self.members)):
+                raise ValueError("duplicate interface in LAG members")
+            if self.port_channel_id is None:
+                raise ValueError("LAG endpoint (members set) requires port_channel_id")
+        if self.port_channel_mode is not None and self.port_channel_id is None:
+            raise ValueError("port_channel_mode requires port_channel_id")
+        return self
 
 
 class Connection(StrictModel):
@@ -134,6 +123,23 @@ class Connection(StrictModel):
     def _distinct_ends(self) -> "Connection":
         if self.a.component == self.b.component:
             raise ValueError("a connection must join two different components")
+        return self
+
+    @model_validator(mode="after")
+    def _switchport_mode_agreement(self) -> "Connection":
+        # If both ends declare a switchport mode, they must match (an access<->trunk
+        # link is a misconfiguration), and `trunk` must reflect that mode.
+        modes = [e.switchport.mode for e in (self.a, self.b) if e.switchport is not None]
+        if len(modes) == 2 and modes[0] != modes[1]:
+            raise ValueError(
+                f"connection ends disagree on switchport mode: {modes[0]} vs {modes[1]}"
+            )
+        if modes:
+            declared_trunk = modes[0] == SwitchportMode("trunk")
+            if declared_trunk != bool(self.trunk):
+                raise ValueError(
+                    "connection 'trunk' flag disagrees with endpoint switchport mode"
+                )
         return self
 
 
@@ -157,6 +163,10 @@ class System(StrictModel):
     enclaves: list[Enclave] = Field(default_factory=list)
     components: list[Component] = Field(default_factory=list)
     connections: list[Connection] = Field(default_factory=list)
+    vlans: list[Vlan] = Field(
+        default_factory=list,
+        description="System-wide VLAN table; switchport VLAN ids must resolve here",
+    )
 
     schema_version: str = SYSTEM_SCHEMA_VERSION
 
@@ -190,6 +200,14 @@ class System(StrictModel):
             raise ValueError("component ids must be unique")
         return v
 
+    @field_validator("vlans")
+    @classmethod
+    def _unique_vlan_ids(cls, v: list[Vlan]) -> list[Vlan]:
+        ids = [vlan.id for vlan in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("VLAN ids must be unique")
+        return v
+
     @model_validator(mode="after")
     def _references_resolve(self) -> "System":
         enclave_names = {e.name for e in self.enclaves}
@@ -207,9 +225,34 @@ class System(StrictModel):
                     )
         return self
 
+    @model_validator(mode="after")
+    def _switchport_vlans_defined(self) -> "System":
+        # Every VLAN id referenced by a switchport must exist in the VLAN table
+        # (only enforced when a table is provided, so partial drafts stay usable).
+        if not self.vlans:
+            return self
+        defined = {vlan.id for vlan in self.vlans}
+        for conn in self.connections:
+            for end in (conn.a, conn.b):
+                sp = end.switchport
+                if sp is None:
+                    continue
+                referenced: set[int] = set()
+                if sp.access_vlan is not None:
+                    referenced.add(sp.access_vlan)
+                if sp.native_vlan is not None:
+                    referenced.add(sp.native_vlan)
+                if sp.allowed_vlans is not None:
+                    referenced |= sp.allowed_vlans.expand()
+                missing = referenced - defined
+                if missing:
+                    raise ValueError(
+                        f"switchport on component '{end.component}' references "
+                        f"undefined VLAN id(s): {sorted(missing)}"
+                    )
+        return self
+
 
 __all__ = [
-    "SYSTEM_SCHEMA_VERSION",
-    "Classification", "Environment", "AtoStatus", "LinkMedia",
     "Enclave", "Component", "Endpoint", "Connection", "System",
 ]

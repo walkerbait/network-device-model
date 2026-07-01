@@ -1,13 +1,15 @@
-# device-definition-models
+# network-models
 
-Strict, portable **Pydantic v2** data models for reusable network **device
-definitions** — the schema-enforced building blocks selected when generating
-configs for a system or device.
+Strict, portable **Pydantic v2** data models for network **device definitions**
+and deployed **systems** — the schema-enforced building blocks selected when
+generating configs for a system or device.
 
 A *device definition* describes a reusable device **type** (e.g. "Cisco Catalyst
 9300-48P") — identity, physical attributes, ports/interfaces, applicable STIGs,
 baseline layers, and Cisco Network-as-Code integration — as distinct from a
 concrete device **instance** (a specific unit with a hostname and management IP).
+A *system* describes a concrete deployment: enclaves (security zones), the
+components (device instances) in them, and the Layer-2 connections between them.
 
 ## Why
 
@@ -32,7 +34,7 @@ concrete device **instance** (a specific unit with a hostname and management IP)
 ## Usage
 
 ```python
-from device_definition_models import DeviceDefinition, DeviceDefinitionLibrary
+from network_models import DeviceDefinition, DeviceDefinitionLibrary
 
 d = DeviceDefinition(
     manufacturer="Cisco",
@@ -65,6 +67,28 @@ DeviceDefinition(..., slug="Cisco Catalyst 9300")                            # V
 DeviceDefinition(..., u_height=1.3)                                          # ValidationError (0.5 increments)
 ```
 
+## Package structure
+
+The package is split into two domains under `network_models/`, with shared
+building blocks at the top:
+
+```
+network_models/
+  base.py              # StrictModel (shared strict base)
+  _enum.py             # _str_enum helper (verbatim value lists -> str enums)
+  device/              # reusable device *type* definitions
+    vocab.py           #   value lists + enums (Nautobot + NaC vocab)
+    components.py      #   Interface, ConsolePort, PowerPort, ...
+    definition.py      #   DeviceDefinition, DeviceDefinitionLibrary, STIG, NaC
+  system/              # deployed *system* topology + L2 config
+    vocab.py           #   classification/environment/ATO + L2 (switchport/VLAN) enums
+    l2.py              #   Vlan, VlanRange, TrunkAllowedVlans, Switchport, SpanningTree
+    topology.py        #   Enclave, Component, Endpoint, Connection, System
+```
+
+Everything is re-exported from the top level (`from network_models import ...`),
+and each domain is also importable directly (`from network_models.system import System`).
+
 ## Model map
 
 - **Identity** — `manufacturer`, `model`, `slug`, `part_number`, `category`,
@@ -89,7 +113,6 @@ python tests/test_models.py
 
 ## Extracting to its own repository
 
-Move `models.py`, `__init__.py`, `pyproject.toml`, `README.md`, and
-`validate_selftest.py` into a new repo (keeping them under a
-`device_definition_models/` package directory). No code changes are required —
-the package has no dependency on this application.
+Move the `network_models/` package directory along with `pyproject.toml` and
+`README.md` into a new repo. No code changes are required — the package depends
+only on `pydantic>=2.5` and has no dependency on this application.

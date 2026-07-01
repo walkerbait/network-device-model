@@ -30,7 +30,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from device_definition_models import DeviceDefinition
+from network_models import DeviceDefinition
 
 # Make the sibling ``scripts`` package importable so the test and the CLI share
 # the exact same adapter logic (single source of truth for normalization).

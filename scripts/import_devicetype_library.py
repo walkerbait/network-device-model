@@ -45,7 +45,7 @@ from pydantic import ValidationError
 # Ensure the package is importable when run as a plain script from the repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from device_definition_models import DeviceDefinition  # noqa: E402
+from network_models import DeviceDefinition  # noqa: E402
 
 # Repo root and the default local (gitignored) destination for converted output.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
